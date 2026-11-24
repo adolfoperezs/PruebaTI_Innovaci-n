@@ -1,0 +1,102 @@
+# Pipeline dev -> prod
+# - Todo cambio se sube a la rama `dev`.
+# - Se valida y se publica automáticamente en el ambiente DEV (/dev/).
+# - El paso a PROD queda en pausa hasta que el dueño lo apruebe (ambiente `production`).
+# - Al aprobar: `main` avanza al mismo commit de `dev` y se publica en la raíz del sitio.
+
+name: Pipeline dev -> prod
+
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pipeline
+  cancel-in-progress: false
+
+env:
+  APP_FILE: INN_Visor_Datos.html
+  SITE_URL: https://adolfoperezs.github.io/PruebaTI_Innovaci-n
+
+jobs:
+  validar:
+    name: Validar
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Revisar que el HTML exista y esté completo
+        run: |
+          test -s "$APP_FILE" || { echo "::error::No existe $APP_FILE"; exit 1; }
+          grep -qi "<html" "$APP_FILE" || { echo "::error::Falta <html>"; exit 1; }
+          grep -qi "</html>" "$APP_FILE" || { echo "::error::Falta </html> (archivo cortado)"; exit 1; }
+          python3 - <<'PY'
+          import html.parser, os
+          p = html.parser.HTMLParser()
+          p.feed(open(os.environ["APP_FILE"], encoding="utf-8").read())
+          print("HTML legible OK")
+          PY
+
+  deploy-dev:
+    name: Publicar en DEV
+    needs: validar
+    runs-on: ubuntu-latest
+    environment:
+      name: dev
+      url: ${{ env.SITE_URL }}/dev/
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: src
+      - name: Publicar en gh-pages/dev
+        run: |
+          set -e
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          REPO_URL="https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          if git ls-remote --exit-code --heads "$REPO_URL" gh-pages >/dev/null; then
+            git clone --depth 1 --branch gh-pages "$REPO_URL" site
+          else
+            mkdir site && cd site && git init -b gh-pages && git remote add origin "$REPO_URL" && cd ..
+          fi
+          rm -rf site/dev && mkdir -p site/dev
+          cp src/*.html site/dev/
+          cp "src/$APP_FILE" site/dev/index.html
+          touch site/.nojekyll
+          cd site
+          git add -A
+          git diff --cached --quiet || git commit -m "DEV: ${{ github.sha }}"
+          git push origin gh-pages
+
+  deploy-prod:
+    name: Publicar en PROD (requiere aprobación)
+    needs: deploy-dev
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ env.SITE_URL }}/
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: src
+          fetch-depth: 0
+      - name: Avanzar main al commit aprobado
+        working-directory: src
+        run: git push origin "${{ github.sha }}:refs/heads/main"
+      - name: Publicar en gh-pages (raíz)
+        run: |
+          set -e
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git clone --depth 1 --branch gh-pages "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" site
+          find site -maxdepth 1 -type f -name "*.html" -delete
+          cp src/*.html site/
+          cp "src/$APP_FILE" site/index.html
+          touch site/.nojekyll
+          cd site
+          git add -A
+          git diff --cached --quiet || git commit -m "PROD: ${{ github.sha }}"
+          git push origin gh-pages
