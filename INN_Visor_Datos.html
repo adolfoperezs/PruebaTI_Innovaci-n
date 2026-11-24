@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Visor INN Datos</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--tx:#1d2330;--mu:#636b7a;--ln:#dfe3ea;--ac:#2557d6;--ac2:#e8eefc;--ok:#1f8a5b;--wr:#b7791f}
+@media (prefers-color-scheme:dark){:root{--bg:#14171d;--card:#1d222b;--tx:#e6e9ef;--mu:#9aa3b2;--ln:#2e3543;--ac:#7aa2ff;--ac2:#243250;--ok:#4cc38a;--wr:#e0b050}}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{position:sticky;top:0;z-index:5;background:var(--card);border-bottom:1px solid var(--ln);padding:10px 16px;display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center}
+h1{font-size:17px;margin:0;flex:1 1 auto}
+.meta{color:var(--mu);font-size:12px}
+button{font:inherit;border:1px solid var(--ln);background:var(--card);color:var(--tx);border-radius:8px;padding:6px 12px;cursor:pointer}
+button.pri{background:var(--ac);border-color:var(--ac);color:#fff}
+button:disabled{opacity:.5;cursor:default}
+label.chk{font-size:12px;color:var(--mu);display:flex;gap:4px;align-items:center}
+nav{display:flex;gap:4px;overflow-x:auto;padding:8px 16px;border-bottom:1px solid var(--ln);background:var(--bg)}
+nav button{white-space:nowrap;border-radius:6px;padding:5px 10px;font-size:13px}
+nav button.on{background:var(--ac2);border-color:var(--ac);color:var(--ac)}
+main{padding:16px;max-width:1400px;margin:0 auto}
+.msg{padding:10px 14px;border-radius:8px;background:var(--ac2);margin-bottom:12px}
+.warn{background:transparent;border:1px solid var(--wr);color:var(--wr);font-size:12px;padding:4px 8px;border-radius:6px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+.card{background:var(--card);border:1px solid var(--ln);border-radius:10px;padding:12px 14px}
+.card h3{margin:0 0 8px;font-size:13px;color:var(--mu);font-weight:600}
+.big{font-size:24px;font-weight:700}
+.sub{color:var(--mu);font-size:12px}
+.bar{display:grid;grid-template-columns:minmax(80px,40%) 1fr 36px;gap:6px;align-items:center;font-size:12px;margin:3px 0}
+.bar i{display:block;height:10px;background:var(--ac);border-radius:3px}
+.bar b{text-align:right;font-weight:600}
+.tools{display:flex;gap:10px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
+input[type=search]{font:inherit;padding:6px 10px;border:1px solid var(--ln);border-radius:8px;background:var(--card);color:var(--tx);min-width:220px;flex:1 1 220px;max-width:400px}
+.tw{overflow:auto;border:1px solid var(--ln);border-radius:10px;background:var(--card);max-height:calc(100vh - 210px)}
+table{border-collapse:collapse;width:100%}
+th,td{padding:6px 10px;border-bottom:1px solid var(--ln);text-align:left;vertical-align:top}
+th{position:sticky;top:0;background:var(--card);cursor:pointer;white-space:nowrap;font-size:12px;color:var(--mu)}
+th small{display:block;font-weight:400;font-size:10px}
+td.n{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+td.sec{font-weight:600;background:var(--ac2)}
+tr:hover td{background:var(--ac2)}
+#drop{display:none;position:fixed;inset:0;background:rgba(37,87,214,.15);border:3px dashed var(--ac);z-index:9}
+input[type=file]{display:none}
+@media (max-width:600px){main{padding:12px}h1{font-size:15px}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Innovación · Datos de entrada</h1>
+  <span class="meta" id="info">Sin archivo cargado</span>
+  <span id="fict"></span>
+  <button id="bElegir">Elegir Excel</button>
+  <button id="bAct" class="pri" disabled>Actualizar</button>
+  <label class="chk" id="lAuto" hidden><input type="checkbox" id="cAuto"> auto (5 s)</label>
+  <input type="file" id="fIn" accept=".xlsx">
+</header>
+<nav id="tabs"></nav>
+<main id="main"><div class="msg">Pulsa <b>Elegir Excel</b> y selecciona <b>INN_Datos_Entrada.xlsx</b> (o arrástralo aquí). Después de guardar cambios en Excel, pulsa <b>Actualizar</b>.</div></main>
+<div id="drop"></div>
+<script>
+"use strict";
+const $=id=>document.getElementById(id);
+const S={handle:null,file:null,wb:null,tab:"Resumen",q:{},sort:{},mod:0,timer:0};
+const fmtN=new Intl.NumberFormat("es-CL",{maximumFractionDigits:2});
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+/* ---------- ZIP + XLSX sin librerías ---------- */
+async function unzip(buf){
+  const u=new Uint8Array(buf),dv=new DataView(buf),out={};
+  let e=u.length-22;
+  while(e>=0&&dv.getUint32(e,true)!==0x06054b50)e--;
+  if(e<0)throw new Error("El archivo no es un .xlsx válido");
+  let p=dv.getUint32(e+16,true);const n=dv.getUint16(e+10,true);
+  const dec=new TextDecoder();
+  for(let i=0;i<n;i++){
+    const m=dv.getUint16(p+10,true),cs=dv.getUint32(p+20,true),nl=dv.getUint16(p+28,true),
+      xl=dv.getUint16(p+30,true),cl=dv.getUint16(p+32,true),lo=dv.getUint32(p+42,true);
+    const name=dec.decode(u.subarray(p+46,p+46+nl));
+    p+=46+nl+xl+cl;
+    if(!/\.(xml|rels)$/.test(name))continue;
+    const ds=lo+30+dv.getUint16(lo+26,true)+dv.getUint16(lo+28,true);
+    const raw=u.subarray(ds,ds+cs);
+    out[name]=()=>m===0?Promise.resolve(dec.decode(raw)):
+      new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).text();
+  }
+  return out;
+}
+const xml=t=>new DOMParser().parseFromString(t,"application/xml");
+const kids=(el,tag)=>Array.from(el.getElementsByTagName(tag));
+function colIdx(ref){let c=0;for(const ch of ref.replace(/\d+/g,""))c=c*26+ch.charCodeAt(0)-64;return c-1}
+
+async function readXlsx(buf){
+  const z=await unzip(buf),get=async n=>z[n]?xml(await z[n]()):null;
+  const wbx=await get("xl/workbook.xml"),rel=await get("xl/_rels/workbook.xml.rels"),ssx=await get("xl/sharedStrings.xml");
+  const ss=ssx?kids(ssx,"si").map(si=>kids(si,"t").filter(t=>t.parentNode.nodeName!=="rPh").map(t=>t.textContent).join("")):[];
+  const tgt={};kids(rel,"Relationship").forEach(r=>tgt[r.getAttribute("Id")]=r.getAttribute("Target"));
+  const sheets=[];
+  for(const sh of kids(wbx,"sheet")){
+    const rid=sh.getAttribute("r:id")||sh.getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships","id");
+    let t=tgt[rid]||"";t=t.startsWith("/")?t.slice(1):"xl/"+t.replace(/^\.\//,"");
+    const d=await get(t);if(!d)continue;
+    const rows=[];
+    for(const r of kids(d,"row")){
+      const ri=+r.getAttribute("r")-1,row=rows[ri]=[];
+      for(const c of kids(r,"c")){
+        const ty=c.getAttribute("t"),v=c.getElementsByTagName("v")[0];let val=null;
+        if(ty==="s")val=v?ss[+v.textContent]:null;
+        else if(ty==="inlineStr")val=kids(c,"t").map(x=>x.textContent).join("");
+        else if(ty==="b")val=v?(v.textContent==="1"?"VERDADERO":"FALSO"):null;
+        else if(ty==="str"||ty==="e")val=v?v.textContent:null;
+        else if(v)val=Number(v.textContent);
+        if(val!==null&&val!=="")row[colIdx(c.getAttribute("r"))]=val;
+      }
+    }
+    sheets.push({name:sh.getAttribute("name"),rows:Array.from(rows,r=>r||[])});
+  }
+  return sheets.map(shape);
+}
+const filled=r=>(r||[]).filter(v=>v!=null&&v!=="").length;
+function shape(s){
+  const R=s.rows,a1=String((R[0]||[])[0]||"");
+  if(/Origen:/.test(a1)&&filled(R[3])>=1){
+    const hdr=R[3],cols=[];hdr.forEach((h,i)=>{if(h!=null&&h!=="")cols.push({i,name:String(h).trim(),orig:(R[2]||[])[i]||""})});
+    const data=R.slice(4).filter(r=>cols.some(c=>r[c.i]!=null)).map(r=>cols.map(c=>r[c.i]??null));
+    return {kind:"data",name:s.name,title:a1,desc:(R[1]||[])[0]||"",cols,data};
+  }
+  return {kind:"ref",name:s.name,title:a1,rows:R.slice(1).filter(r=>filled(r))};
+}
+
+/* ---------- formato ---------- */
+const isDateCol=n=>/^fecha/i.test(n), isClp=n=>/clp/i.test(n);
+function serialToDate(n){const d=new Date(Math.round((n-25569)*864e5));return String(d.getUTCDate()).padStart(2,"0")+"-"+String(d.getUTCMonth()+1).padStart(2,"0")+"-"+d.getUTCFullYear()}
+function show(v,col){
+  if(v==null)return"";
+  if(typeof v==="number"){if(isDateCol(col))return serialToDate(v);return(isClp(col)?"$ ":"")+fmtN.format(v)}
+  return String(v);
+}
+const num=v=>typeof v==="number"?v:(v!=null&&/^-?\d+([.,]\d+)?$/.test(String(v).trim())?Number(String(v).replace(",",".")):null);
+
+/* ---------- carga de archivo ---------- */
+let db=null;
+function idb(){return new Promise(res=>{try{const r=indexedDB.open("inn-visor",1);r.onupgradeneeded=()=>r.result.createObjectStore("h");r.onsuccess=()=>res(db=r.result);r.onerror=()=>res(null)}catch(e){res(null)}})}
+function idbDo(mode,fn){return new Promise(res=>{try{if(!db)return res(null);const t=db.transaction("h",mode),q=fn(t.objectStore("h"));t.oncomplete=()=>res(q&&q.result);t.onerror=()=>res(null)}catch(e){res(null)}})}
+
+async function load(file){
+  try{
+    const sheets=await readXlsx(await file.arrayBuffer());
+    S.wb=sheets;S.file=file.name;S.mod=file.lastModified;
+    if(!S.wb.some(s=>s.name===S.tab)&&S.tab!=="Resumen"&&S.tab!=="Referencia")S.tab="Resumen";
+    $("info").textContent=file.name+" · guardado "+new Date(file.lastModified).toLocaleString("es-CL")+" · leído "+new Date().toLocaleTimeString("es-CL");
+    const ins=sheets.find(s=>s.kind==="ref"&&s.rows.some(r=>/DATOS FICTICIOS/i.test(r.join(" "))));
+    $("fict").innerHTML=ins?'<span class="warn">Datos ficticios</span>':"";
+    $("bAct").disabled=false;render();
+  }catch(e){$("main").innerHTML='<div class="msg">No se pudo leer el archivo: '+esc(e.message)+'. Si está abierto en Excel, guárdalo y vuelve a intentar.</div>'}
+}
+async function pick(){
+  if(window.showOpenFilePicker){
+    try{const [h]=await showOpenFilePicker({types:[{description:"Excel",accept:{"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":[".xlsx"]}}]});
+      S.handle=h;await idbDo("readwrite",st=>st.put(h,"file"));$("lAuto").hidden=false;await load(await h.getFile());}catch(e){if(e.name!=="AbortError")$("fIn").click()}
+  }else $("fIn").click();
+}
+async function refresh(){
+  if(!S.handle){$("fIn").click();return}
+  try{
+    if(S.handle.queryPermission&&await S.handle.queryPermission({mode:"read"})!=="granted"&&await S.handle.requestPermission({mode:"read"})!=="granted")return;
+    await load(await S.handle.getFile());
+  }catch(e){$("main").innerHTML='<div class="msg">No se pudo releer el archivo ('+esc(e.message)+'). Pulsa <b>Elegir Excel</b>.</div>'}
+}
+function setAuto(on){clearInterval(S.timer);if(on)S.timer=setInterval(async()=>{try{const f=await S.handle.getFile();if(f.lastModified!==S.mod)load(f)}catch(e){}},5000)}
+
+/* ---------- vistas ---------- */
+const sheet=n=>S.wb&&S.wb.find(s=>s.kind==="data"&&s.name===n);
+const ci=(s,c)=>s?s.cols.findIndex(x=>x.name===c):-1;
+function sum(sn,c){const s=sheet(sn),i=ci(s,c);if(i<0)return null;let t=0,k=0;s.data.forEach(r=>{const v=num(r[i]);if(v!=null){t+=v;k++}});return{t,k,n:s.data.length}}
+function countBy(sn,c){const s=sheet(sn),i=ci(s,c);if(i<0)return null;const m=new Map();s.data.forEach(r=>{const k=r[i]==null||r[i]===""?"(vacío)":String(r[i]);m.set(k,(m.get(k)||0)+1)});return[...m].sort((a,b)=>b[1]-a[1])}
+function bars(list){if(!list)return"";const mx=Math.max(...list.map(x=>x[1]),1);return list.map(([k,v])=>`<div class="bar"><span>${esc(k)}</span><i style="width:${v/mx*100}%"></i><b>${v}</b></div>`).join("")}
+const card=(t,body)=>`<div class="card"><h3>${esc(t)}</h3>${body}</div>`;
+const big=(v,sub)=>`<div class="big">${v}</div>${sub?`<div class="sub">${sub}</div>`:""}`;
+const clp=v=>"$ "+fmtN.format(Math.round(v));
+
+function resumen(){
+  const C=[],cnt=n=>sheet(n)?sheet(n).data.length:null;
+  if(cnt("Ideas_Formulario")!=null)C.push(card("Ideas recibidas",big(cnt("Ideas_Formulario"),"filas en Ideas_Formulario")+bars(countBy("Ideas_Formulario","Tipo_Iniciativa"))));
+  const h=sum("Caso_Negocio","Horas_Liberadas"),a=sum("Caso_Negocio","Ahorro_CLP");
+  if(h)C.push(card("Horas liberadas (caso de negocio)",big(fmtN.format(h.t)+" h/mes",`${h.k} iniciativas · horas no son dinero ahorrado`)));
+  if(a)C.push(card("Ahorro en dinero (caso de negocio)",big(clp(a.t),`${a.k} iniciativas · promedio ${clp(a.k?a.t/a.k:0)}`)));
+  if(sheet("Cartera_Jira")){C.push(card("Cartera Jira por estado",big(cnt("Cartera_Jira"),"iniciativas")+bars(countBy("Cartera_Jira","Estado_Cartera"))));
+    C.push(card("Cartera Jira por plataforma",bars(countBy("Cartera_Jira","Plataforma"))))}
+  if(sheet("Observaciones"))C.push(card("Observaciones por tipo",big(cnt("Observaciones"),"observaciones")+bars(countBy("Observaciones","Tipo_Observacion"))));
+  if(sheet("Historias"))C.push(card("Historias por versión",big(cnt("Historias"),"criterios de aceptación")+bars(countBy("Historias","Version"))));
+  if(sheet("Iniciativas_Comite")){C.push(card("Comité: caso de negocio",big(cnt("Iniciativas_Comite"),"iniciativas candidatas")+bars(countBy("Iniciativas_Comite","Caso_Negocio"))));
+    C.push(card("Comité: tipo declarado",bars(countBy("Iniciativas_Comite","Tipo_Declarado"))))}
+  const he=sum("Beneficio_Seguimiento","Horas_Est_Mes"),h3=sum("Beneficio_Seguimiento","Horas_Real_3M"),h6=sum("Beneficio_Seguimiento","Horas_Real_6M");
+  if(he)C.push(card("Beneficio: horas al mes",
+    `<div class="bar"><span>Estimadas</span><i style="width:100%"></i><b>${fmtN.format(he.t)}</b></div>`+
+    (h3?`<div class="bar"><span>Real 3 meses</span><i style="width:${Math.min(100,h3.t/(he.t||1)*100)}%"></i><b>${fmtN.format(h3.t)}</b></div>`:"")+
+    (h6?`<div class="bar"><span>Real 6 meses</span><i style="width:${Math.min(100,h6.t/(he.t||1)*100)}%"></i><b>${fmtN.format(h6.t)}</b></div>`:"")+
+    `<div class="sub">${he.n} iniciativas en marcha${h6?` · real 6M con dato en ${h6.k} de ${h6.n}`:""}</div>`));
+  const ae=sum("Beneficio_Seguimiento","Ahorro_Est_CLP_Mes"),ar=sum("Beneficio_Seguimiento","Ahorro_Real_CLP_Mes");
+  if(ae&&ar)C.push(card("Beneficio: ahorro CLP al mes",big(clp(ar.t),"real · estimado "+clp(ae.t))));
+  const ua=sum("Beneficio_Seguimiento","Usuarios_Activos"),uo=sum("Beneficio_Seguimiento","Usuarios_Objetivo");
+  if(ua&&uo)C.push(card("Beneficio: adopción",big(fmtN.format(uo.t?ua.t/uo.t*100:0)+" %",`${fmtN.format(ua.t)} usuarios activos de ${fmtN.format(uo.t)} objetivo`)));
+  return`<div class="grid">${C.join("")||'<div class="msg">No se encontraron hojas conocidas.</div>'}</div>`;
+}
+
+function dataView(s){
+  const q=(S.q[s.name]||"").toLowerCase(),so=S.sort[s.name];
+  let rows=s.data.map(r=>({r,txt:r.map((v,i)=>show(v,s.cols[i].name)).join(" ").toLowerCase()}));
+  if(q)rows=rows.filter(x=>x.txt.includes(q));
+  if(so){const i=so.i,d=so.d;rows.sort((A,B)=>{const a=A.r[i],b=B.r[i];if(a==null)return 1;if(b==null)return-1;
+    const na=num(a),nb=num(b);return(na!=null&&nb!=null?na-nb:String(a).localeCompare(String(b),"es",{numeric:true}))*d})}
+  const th=s.cols.map((c,i)=>`<th data-i="${i}">${esc(c.name)}${so&&so.i===i?(so.d>0?" ▲":" ▼"):""}<small>${esc(c.orig)}</small></th>`).join("");
+  const tb=rows.map(({r})=>"<tr>"+r.map((v,i)=>`<td${typeof v==="number"?' class="n"':""}>${esc(show(v,s.cols[i].name))}</td>`).join("")+"</tr>").join("");
+  return`<div class="tools"><input type="search" id="qs" placeholder="Buscar en ${esc(s.name)}…" value="${esc(S.q[s.name]||"")}"><span class="sub">${rows.length} de ${s.data.length} filas · ${esc(s.desc)}</span></div>
+  <div class="tw"><table><thead><tr>${th}</tr></thead><tbody>${tb||`<tr><td colspan="${s.cols.length}">Sin filas</td></tr>`}</tbody></table></div>`;
+}
+function refView(){
+  return S.wb.filter(s=>s.kind==="ref").map(s=>{
+    const w=Math.max(1,...s.rows.map(r=>r.length));
+    const tb=s.rows.map(r=>filled(r)===1&&r[0]!=null?`<tr><td colspan="${w}" class="sec">${esc(show(r[0],""))}</td></tr>`:
+      "<tr>"+Array.from({length:w},(_,i)=>`<td>${esc(show(r[i],""))}</td>`).join("")+"</tr>").join("");
+    return`<div class="card" style="margin-bottom:12px"><h3>${esc(s.name)} · ${esc(s.title)}</h3><div class="tw" style="max-height:none"><table><tbody>${tb}</tbody></table></div></div>`}).join("");
+}
+function render(){
+  if(!S.wb)return;
+  const tabs=["Resumen",...S.wb.filter(s=>s.kind==="data").map(s=>s.name)];
+  if(S.wb.some(s=>s.kind==="ref"))tabs.push("Referencia");
+  if(!tabs.includes(S.tab))S.tab="Resumen";
+  $("tabs").innerHTML=tabs.map(t=>{const s=sheet(t);return`<button data-t="${esc(t)}" class="${t===S.tab?"on":""}">${esc(t)}${s?` (${s.data.length})`:""}</button>`}).join("");
+  const s=sheet(S.tab);
+  $("main").innerHTML=S.tab==="Resumen"?resumen():S.tab==="Referencia"?refView():dataView(s);
+}
+
+/* ---------- eventos ---------- */
+$("bElegir").onclick=pick;
+$("bAct").onclick=refresh;
+$("cAuto").onchange=e=>setAuto(e.target.checked);
+$("fIn").onchange=e=>{const f=e.target.files[0];if(f){S.handle=null;$("lAuto").hidden=true;load(f)}e.target.value=""};
+$("tabs").onclick=e=>{const b=e.target.closest("button");if(b){S.tab=b.dataset.t;render()}};
+$("main").addEventListener("click",e=>{const th=e.target.closest("th");if(!th)return;const i=+th.dataset.i,o=S.sort[S.tab];S.sort[S.tab]={i,d:o&&o.i===i?-o.d:1};render()});
+$("main").addEventListener("input",e=>{if(e.target.id!=="qs")return;S.q[S.tab]=e.target.value;const p=e.target.selectionStart;render();const n=$("qs");n.focus();n.setSelectionRange(p,p)});
+addEventListener("dragover",e=>{e.preventDefault();$("drop").style.display="block"});
+addEventListener("dragleave",e=>{if(!e.relatedTarget)$("drop").style.display="none"});
+addEventListener("drop",async e=>{e.preventDefault();$("drop").style.display="none";const it=e.dataTransfer.items&&e.dataTransfer.items[0];
+  if(it&&it.getAsFileSystemHandle){try{const h=await it.getAsFileSystemHandle();if(h&&h.kind==="file"){S.handle=h;await idbDo("readwrite",st=>st.put(h,"file"));$("lAuto").hidden=false;return load(await h.getFile())}}catch(_){}}
+  const f=e.dataTransfer.files[0];if(f){S.handle=null;load(f)}});
+(async()=>{await idb();const h=await idbDo("readonly",st=>st.get("file"));
+  if(h){S.handle=h;$("bAct").disabled=false;$("lAuto").hidden=false;
+    try{if(await h.queryPermission({mode:"read"})==="granted")return load(await h.getFile())}catch(_){}
+    $("main").innerHTML=`<div class="msg">Último archivo: <b>${esc(h.name)}</b>. Pulsa <b>Actualizar</b> para releerlo.</div>`}})();
+</script>
+</body>
+</html>
