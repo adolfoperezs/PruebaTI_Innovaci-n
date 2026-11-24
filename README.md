@@ -24,3 +24,21 @@ En cada hoja de datos: fila 1 título con `Origen:`, fila 2 descripción, fila 3
 ## Requisitos
 
 Navegador actual con `DecompressionStream` (Chrome/Edge 103+, Firefox 113+, Safari 16.4+). La relectura del mismo archivo usa la File System Access API (Chrome y Edge).
+
+## Ambientes (dev → prod)
+
+| Ambiente | Rama | URL | Publicación |
+|---|---|---|---|
+| **DEV** (pruebas) | `dev` | https://adolfoperezs.github.io/PruebaTI_Innovaci-n/dev/ | Automática en cada push a `dev` |
+| **PROD** | `main` | https://adolfoperezs.github.io/PruebaTI_Innovaci-n/ | Automática **después de la aprobación del dueño** |
+
+Flujo (`.github/workflows/pipeline.yml`):
+
+1. Los cambios se suben **solo a `dev`** (no directo a `main`).
+2. El pipeline valida el HTML y lo publica en DEV.
+3. El job *Publicar en PROD* queda en espera: GitHub avisa al dueño (`adolfoperezs`), que revisa DEV y pulsa **Review deployments → Approve** en la pestaña Actions.
+4. Al aprobar, `main` avanza al mismo commit de `dev` y se publica en PROD. Si se rechaza, PROD no cambia.
+
+Notas:
+- El ambiente `production` (Settings → Environments) exige aprobación de `adolfoperezs` y solo acepta despliegues desde `dev`.
+- Si un cambio modifica archivos dentro de `.github/workflows/`, la promoción automática a `main` la bloquea GitHub; ese cambio se pasa a `main` a mano (PR `dev` → `main`).
